@@ -1,0 +1,107 @@
+---
+- name: Configure matching Ubuntu VMs
+  hosts: ubuntu_vms
+  become: yes
+
+  # vars:
+    # go_version: "1.24.3"
+    # go_install_dir: "/usr/local"
+    # go_tar_file: "go{{ go_version }}.linux-{{ ansible_architecture | replace('x86_64', 'amd64') | replace('aarch64', 'arm64') }}.tar.gz"
+    # go_download_url: "https://dl.google.com/go/{{ go_tar_file }}"
+
+  tasks:
+    - name: Stop packagekitd to free apt lock (if running)
+      ansible.builtin.systemd:
+        name: packagekit
+        state: stopped
+      ignore_errors: yes # Ignore if packagekit is not found or not running, this is often the case.
+
+    - name: Kill any remaining apt-related processes (if lock persists)
+      ansible.builtin.shell: |
+        sudo killall apt apt-get dpkg || true
+        sudo rm -f /var/lib/apt/lists/lock
+        sudo rm -f /var/cache/apt/archives/lock
+        sudo rm -f /var/lib/dpkg/lock
+        sudo rm -f /var/lib/dpkg/lock-frontend
+      args:
+        warn: false
+      become: yes # Needs sudo to kill processes and remove lock files
+      when: ansible_facts.os_family == "Debian" # Only run on Debian-based systems like Ubuntu/Zorin
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: Install common packages
+      ansible.builtin.apt:
+        name:
+          - git
+        state: present
+
+    - name: Clone GitHub project repository
+      ansible.builtin.git:
+        repo: 'https://github.com/opencontainers/runc.git'
+        dest: '/home/{{ ansible_user }}/Documents/runc'
+        version: main
+      become: no
+
+    # --- Tasks for VS Code ---
+    - name: Get system architecture
+      ansible.builtin.setup:
+        filter: ansible_architecture
+
+    # Install VS Code for AMD64 systems
+    - name: Install Visual Studio Code (AMD64)
+      ansible.builtin.apt:
+        name: code
+        state: present
+        update_cache: yes
+      when: ansible_architecture == 'x86_64' # Only run on AMD64 machines
+
+    # Install VS Code for ARM64 systems (download .deb directly)
+    - name: Download VS Code .deb for ARM64
+      ansible.builtin.get_url:
+        url: https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 # Official ARM64 .deb URL
+        dest: /tmp/code_arm64.deb
+        mode: '0644'
+      when: ansible_architecture == 'aarch64' # Only run on ARM64 machines
+
+    - name: Install VS Code .deb for ARM64
+      ansible.builtin.apt:
+        deb: /tmp/code_arm64.deb
+        state: present
+      when: ansible_architecture == 'aarch64' # Only run on ARM64 machines
+
+    # --- Go 1.24 Installation Tasks (now variables are defined in 'vars' block) ---
+    - name: Download Go tarball
+      ansible.builtin.get_url:
+        url: "{{ go_download_url }}"
+        dest: "/tmp/{{ go_tar_file }}"
+        mode: '0644'
+
+    - name: Delete existing Go installation directory if it exists
+      ansible.builtin.file:
+        path: "{{ go_install_dir }}/go"
+        state: absent
+
+    - name: Extract Go tarball to installation directory
+      ansible.builtin.unarchive:
+        src: "/tmp/{{ go_tar_file }}"
+        dest: "{{ go_install_dir }}"
+        remote_src: yes
+
+    - name: Add Go to PATH for all users (via profile.d)
+      ansible.builtin.blockinfile:
+        path: /etc/profile.d/go_path.sh
+        create: yes
+        mode: '0755'
+        block: |
+          export PATH=$PATH:{{ go_install_dir }}/go/bin
+          export GOPATH=$HOME/go
+
+    # Optional: Verify Go installation (run as the user, not root)
+    - name: Verify Go version for the user
+      ansible.builtin.command: "{{ go_install_dir }}/go/bin/go version"
+      register: go_version_output
+      become: no
+      changed_when: false
