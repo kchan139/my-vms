@@ -1,5 +1,5 @@
 ---
-- name: Configure matching Ubuntu VMs
+- name: Configure Ubuntu VMs
   hosts: ubuntu_vms
   become: yes
 
@@ -10,69 +10,96 @@
     # go_download_url: "https://dl.google.com/go/{{ go_tar_file }}"
 
   tasks:
-    - name: Stop packagekitd to free apt lock (if running)
-      ansible.builtin.systemd:
-        name: packagekit
-        state: stopped
-      ignore_errors: yes # Ignore if packagekit is not found or not running, this is often the case.
+    # - name: Stop packagekitd to free apt lock (if running)
+    #   ansible.builtin.systemd:
+    #     name: packagekit
+    #     state: stopped
+    #   ignore_errors: yes # Ignore if packagekit is not found or not running, this is often the case.
 
-    - name: Kill any remaining apt-related processes (if lock persists)
-      ansible.builtin.shell: |
-        sudo killall apt apt-get dpkg || true
-        sudo rm -f /var/lib/apt/lists/lock
-        sudo rm -f /var/cache/apt/archives/lock
-        sudo rm -f /var/lib/dpkg/lock
-        sudo rm -f /var/lib/dpkg/lock-frontend
-      args:
-        warn: false
-      become: yes # Needs sudo to kill processes and remove lock files
-      when: ansible_facts.os_family == "Debian" # Only run on Debian-based systems like Ubuntu/Zorin
+    # - name: Kill any remaining apt-related processes (if lock persists)
+    #   ansible.builtin.shell: |
+    #     sudo killall apt apt-get dpkg || true
+    #     sudo rm -f /var/lib/apt/lists/lock
+    #     sudo rm -f /var/cache/apt/archives/lock
+    #     sudo rm -f /var/lib/dpkg/lock
+    #     sudo rm -f /var/lib/dpkg/lock-frontend
+    #   args:
+    #     warn: false
+    #   become: yes # Needs sudo to kill processes and remove lock files
+    #   when: ansible_facts.os_family == "Debian" # Only run on Debian-based systems like Ubuntu/Zorin
 
-    - name: Update apt cache
-      ansible.builtin.apt:
-        update_cache: yes
+    # - name: Update apt cache
+    #   ansible.builtin.apt:
+    #     update_cache: yes
 
     - name: Install common packages
       ansible.builtin.apt:
         name:
           - git
+          - curl
+          - wget
+          - build-essential
+        state: present
+        update_cache: yes
+
+# --- WezTerm Installation ---
+    - name: Add WezTerm GPG key
+      ansible.builtin.apt_key:
+        url: https://apt.fury.io/wez/gpg.key
         state: present
 
-    - name: Clone GitHub project repository
+    - name: Add WezTerm repository
+      ansible.builtin.apt_repository:
+        repo: "deb https://apt.fury.io/wez/ * *"
+        state: present
+
+    - name: Install WezTerm
+      ansible.builtin.apt:
+        name: wezterm
+        state: present
+        update_cache: yes
+
+    # --- Helix Installation ---
+    - name: Add Helix PPA
+      ansible.builtin.apt_repository:
+        repo: ppa:maveonair/helix-editor
+        state: present
+
+    - name: Install Helix
+      ansible.builtin.apt:
+        name: helix
+        state: present
+        update_cache: yes
+
+    # --- Dotfiles Setup ---
+    - name: Clone dotfiles repository
       ansible.builtin.git:
-        repo: 'https://github.com/opencontainers/runc.git'
-        dest: '/home/{{ ansible_user }}/Documents/runc'
+        repo: "{{ dotfiles_repo }}"
+        dest: "/home/{{ ansible_user }}/dotfiles"
         version: main
       become: no
 
-    # --- Tasks for VS Code ---
-    - name: Get system architecture
-      ansible.builtin.setup:
-        filter: ansible_architecture
+    - name: Check if setup.sh exists in dotfiles
+      ansible.builtin.stat:
+        path: "/home/{{ ansible_user }}/dotfiles/setup.sh"
+      register: setup_script
+      become: no
 
-    # Install VS Code for AMD64 systems
-    - name: Install Visual Studio Code (AMD64)
-      ansible.builtin.apt:
-        name: code
-        state: present
-        update_cache: yes
-      when: ansible_architecture == 'x86_64' # Only run on AMD64 machines
+    - name: Make setup.sh executable
+      ansible.builtin.file:
+        path: "/home/{{ ansible_user }}/dotfiles/setup.sh"
+        mode: '0755'
+      become: no
+      when: setup_script.stat.exists
 
-    # Install VS Code for ARM64 systems (download .deb directly)
-    - name: Download VS Code .deb for ARM64
-      ansible.builtin.get_url:
-        url: https://code.visualstudio.com/sha/download?build=stable&os=linux-deb-arm64 # Official ARM64 .deb URL
-        dest: /tmp/code_arm64.deb
-        mode: '0644'
-      when: ansible_architecture == 'aarch64' # Only run on ARM64 machines
+    - name: Execute dotfiles setup script
+      ansible.builtin.command:
+        cmd: ./setup.sh
+        chdir: "/home/{{ ansible_user }}/dotfiles"
+      become: no
+      when: setup_script.stat.exists
 
-    - name: Install VS Code .deb for ARM64
-      ansible.builtin.apt:
-        deb: /tmp/code_arm64.deb
-        state: present
-      when: ansible_architecture == 'aarch64' # Only run on ARM64 machines
-
-    # --- Go 1.24 Installation Tasks (now variables are defined in 'vars' block) ---
+    # --- Go Installation ---
     - name: Download Go tarball
       ansible.builtin.get_url:
         url: "{{ go_download_url }}"
@@ -99,7 +126,6 @@
           export PATH=$PATH:{{ go_install_dir }}/go/bin
           export GOPATH=$HOME/go
 
-    # Optional: Verify Go installation (run as the user, not root)
     - name: Verify Go version for the user
       ansible.builtin.command: "{{ go_install_dir }}/go/bin/go version"
       register: go_version_output
