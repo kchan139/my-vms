@@ -71,6 +71,41 @@
         state: present
         update_cache: yes
 
+    # --- Starship Installation ---
+    - name: Download Starship installation script
+      ansible.builtin.get_url:
+        url: https://starship.rs/install.sh
+        dest: /tmp/starship_install.sh
+        mode: '0755'
+
+    - name: Install Starship
+      ansible.builtin.shell: /tmp/starship_install.sh --yes
+      args:
+        creates: /usr/local/bin/starship
+
+    - name: Add Starship to bash profile for all users
+      ansible.builtin.blockinfile:
+        path: /etc/profile.d/starship.sh
+        create: yes
+        mode: '0755'
+        block: |
+          # Initialize Starship prompt
+          if command -v starship >/dev/null 2>&1; then
+            eval "$(starship init bash)"
+          fi
+
+    - name: Add Starship to zsh profile for all users
+      ansible.builtin.blockinfile:
+        path: /etc/zsh/zshrc
+        create: yes
+        mode: '0644'
+        block: |
+          # Initialize Starship prompt
+          if command -v starship >/dev/null 2>&1; then
+            eval "$(starship init zsh)"
+          fi
+      ignore_errors: yes
+
     # --- Dotfiles Setup ---
     - name: Clone dotfiles repository
       ansible.builtin.git:
