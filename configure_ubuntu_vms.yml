@@ -28,9 +28,9 @@
     #   become: yes # Needs sudo to kill processes and remove lock files
     #   when: ansible_facts.os_family == "Debian" # Only run on Debian-based systems like Ubuntu/Zorin
 
-    # - name: Update apt cache
-    #   ansible.builtin.apt:
-    #     update_cache: yes
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
 
     - name: Install common packages
       ansible.builtin.apt:
@@ -42,7 +42,7 @@
         state: present
         update_cache: yes
 
-# --- WezTerm Installation ---
+  # --- WezTerm Installation ---
     - name: Add WezTerm GPG key
       ansible.builtin.apt_key:
         url: https://apt.fury.io/wez/gpg.key
@@ -70,6 +70,22 @@
         name: helix
         state: present
         update_cache: yes
+
+    # --- runc Installation ---
+    - name: Install runc from Ubuntu repository
+      ansible.builtin.apt:
+        name: runc
+        state: present
+        update_cache: yes
+
+    - name: Verify runc installation
+      ansible.builtin.command: runc --version
+      register: runc_version_output
+      changed_when: false
+
+    - name: Display runc version
+      ansible.builtin.debug:
+        msg: "Installed runc version: {{ runc_version_output.stdout }}"
 
     # --- Starship Installation ---
     - name: Download Starship installation script
